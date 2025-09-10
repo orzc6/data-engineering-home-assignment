@@ -1,48 +1,268 @@
-AWSTemplateFormatVersion: "2010-09-09"
-Description: CloudFormation template to create a Lambda function that prints "Hello, World!".
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Data Engineering Assignment - Stocks Processing Pipeline'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: data-engineer-assignment-or-z
+    Description: Name of the S3 bucket for data storage
+  
+  GlueJobName:
+    Type: String
+    Default: stocks-data-processing
+    Description: Name of the Glue job
+  
+  GlueRoleName:
+    Type: String
+    Default: GlueServiceRole
+    Description: Name of the Glue service role
+  
+  DatabaseName:
+    Type: String
+    Default: stocks_database
+    Description: Name of the Glue catalog database
 
 Resources:
-    LambdaExecutionRole:
-        Type: "AWS::IAM::Role"
-        Properties:
-            AssumeRolePolicyDocument:
-                Version: "2012-10-17"
-                Statement:
-                    - Effect: "Allow"
-                      Principal:
-                          Service:
-                              - "lambda.amazonaws.com"
-                      Action: "sts:AssumeRole"
-            Policies:
-                - PolicyName: "LambdaExecutionPolicy"
-                  PolicyDocument:
-                      Version: "2012-10-17"
-                      Statement:
-                          - Effect: "Allow"
-                            Action:
-                                - "logs:CreateLogGroup"
-                                - "logs:CreateLogStream"
-                                - "logs:PutLogEvents"
-                            Resource: "arn:aws:logs:*:*:*"
+  # Glue Service Role
+  GlueServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${GlueRoleName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+                  - !Sub 'arn:aws:s3:::${S3BucketName}'
 
-    HelloWorldLambda:
-        Type: "AWS::Lambda::Function"
-        Properties:
-            FunctionName: "HelloWorldFunction"
-            Handler: "index.handler"
-            Role: !GetAtt LambdaExecutionRole.Arn
-            Runtime: "python3.9"
-            Code:
-                ZipFile: |
-                    def handler(event, context):
-                        print("Hello, World!")
-            Timeout: 30
-            MemorySize: 128
+  # Glue Catalog Database
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub '${DatabaseName}'
+        Description: 'Database for stocks data processing pipeline'
+
+  # Glue Job
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${GlueJobName}'
+      Role: !Ref GlueServiceRole
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${S3BucketName}/scripts/stocks_glue_job.py'
+        PythonVersion: 3
+      DefaultArguments:
+        '--job-language': python
+        '--job-bookmark-option': job-bookmark-disable
+        '--extra-py-files': !Sub 's3://${S3BucketName}/scripts/stocks-pipeline.zip'
+        '--additional-python-modules': 'pydantic==2.11.7'
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--INPUT_S3_PATH': !Sub 's3://${S3BucketName}/input/stocks_data.csv'
+        '--OUTPUT_S3_PATH': !Sub 's3://${S3BucketName}/output/'
+        '--BRONZE_TABLE_NAME': stocks_bronze
+      MaxCapacity: 10
+      GlueVersion: 4.0
+      Timeout: 60
+
+
+  # Glue Crawler for Bronze Layer
+  BronzeCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub '${GlueJobName}-bronze-crawler'
+      Role: !Ref GlueServiceRole
+      DatabaseName: !Ref GlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub 's3://${S3BucketName}/output/bronze/'
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+
+  # Glue Crawler for Silver Layer
+  SilverCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub '${GlueJobName}-silver-crawler'
+      Role: !Ref GlueServiceRole
+      DatabaseName: !Ref GlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub 's3://${S3BucketName}/output/silver/'
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+
+  # Glue Crawler for Gold Layer
+  GoldCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub '${GlueJobName}-gold-crawler'
+      Role: !Ref GlueServiceRole
+      DatabaseName: !Ref GlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub 's3://${S3BucketName}/output/gold/'
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+
+  # Glue Catalog Tables for Gold Layer Results
+  AverageDailyReturnTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: average_daily_return
+        Description: 'Average daily return of all stocks per date'
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+        StorageDescriptor:
+          Columns:
+            - Name: date
+              Type: date
+            - Name: average_return
+              Type: double
+          Location: !Sub 's3://${S3BucketName}/output/gold/average_daily_return/'
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Compressed: true
+        PartitionKeys:
+          - Name: date
+            Type: date
+
+  HighestWorthTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: highest_worth
+        Description: 'Stock with highest average worth'
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+        StorageDescriptor:
+          Columns:
+            - Name: ticker
+              Type: string
+            - Name: value
+              Type: double
+          Location: !Sub 's3://${S3BucketName}/output/gold/highest_worth/'
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Compressed: true
+
+  MostVolatileTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: most_volatile
+        Description: 'Most volatile stock by annualized standard deviation'
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+        StorageDescriptor:
+          Columns:
+            - Name: ticker
+              Type: string
+            - Name: standard_deviation
+              Type: double
+          Location: !Sub 's3://${S3BucketName}/output/gold/most_volatile/'
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Compressed: true
+
+  Top30DayReturnsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: top_30day_returns
+        Description: 'Top 3 stocks with highest 30-day returns'
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+        StorageDescriptor:
+          Columns:
+            - Name: ticker
+              Type: string
+            - Name: date
+              Type: date
+          Location: !Sub 's3://${S3BucketName}/output/gold/top_30day_returns/'
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Compressed: true
+        PartitionKeys:
+          - Name: ticker
+            Type: string
 
 Outputs:
-    LambdaFunctionName:
-        Description: "Name of the Lambda function created"
-        Value: !Ref HelloWorldLambda
-    LambdaExecutionRoleArn:
-        Description: "ARN of the Lambda execution role"
-        Value: !GetAtt LambdaExecutionRole.Arn
+  S3BucketName:
+    Description: 'Name of the S3 bucket'
+    Value: !Ref S3BucketName
+    Export:
+      Name: !Sub '${AWS::StackName}-S3Bucket'
+
+  GlueJobName:
+    Description: 'Name of the Glue job'
+    Value: !Ref GlueJob
+    Export:
+      Name: !Sub '${AWS::StackName}-GlueJob'
+
+  GlueDatabaseName:
+    Description: 'Name of the Glue catalog database'
+    Value: !Ref GlueDatabase
+    Export:
+      Name: !Sub '${AWS::StackName}-GlueDatabase'
+
+  AthenaQueryExample:
+    Description: 'Example Athena queries to test the pipeline'
+    Value: !Sub |
+      -- Query average daily returns
+      SELECT * FROM ${GlueDatabase}.average_daily_return 
+      ORDER BY date DESC LIMIT 10;
+      
+      -- Query highest worth stock
+      SELECT * FROM ${GlueDatabase}.highest_worth;
+      
+      -- Query most volatile stock
+      SELECT * FROM ${GlueDatabase}.most_volatile;
+      
+      -- Query top 30-day returns
+      SELECT * FROM ${GlueDatabase}.top_30day_returns 
+      ORDER BY return_30day DESC LIMIT 3;

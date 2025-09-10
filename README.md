@@ -1,80 +1,247 @@
-# Data Engineering Assignment (PySpark)
+# Data Engineering Assignment - Stocks Processing Pipeline
 
-Before starting to work on the assignment - please make sure you fork this repository.
+A complete data engineering pipeline built with PySpark, AWS Glue, and CloudFormation that processes stock market data through a medallion architecture (Bronze → Silver → Gold layers).
 
-## Requirements:
+## 🎯 Project Objectives
 
-This is an assignment for a Data Engineer role. You are requested to:
+This pipeline answers 4 key questions about stock market data:
 
--   Read and understand the requirements. You may contact the interviewer for further clarification
--   Write code that answers the objectives
--   Deploy the code to the provided AWS account
+1. **Average Daily Return**: What is the average daily return of all stocks per date?
+2. **Highest Worth**: Which stock has the highest average worth?
+3. **Most Volatile**: Which stock is the most volatile by annualized standard deviation?
+4. **Top 30-Day Returns**: What are the top 3 stocks with highest 30-day returns?
 
-You are a Data Engineer in a financial institute. Your task is to calculate and answer the business questions (objectives) provided by the analysts team. You’re provided here with a small dataset, but in a real-world scenario you'll have a huge dataset, so the code needs to be deployed and run on a cloud environenment.
+## 📁 Project Structure
 
-## Coding instructions:
+```
+data-engineering-home-assignment-or-z/
+├── src/                                    # Source code
+│   ├── common/                            # Common utilities
+│   │   ├── const.py                       # Constants and layer definitions
+│   │   ├── io.py                          # I/O utilities for parquet files
+│   │   └── logging_utils.py               # Logging configuration
+│   ├── jobs/                              # AWS Glue job entry points
+│   │   └── stocks_glue_job.py             # Main Glue job script
+│   ├── loaders/                           # Data loaders
+│   │   └── csv_loader.py                  # CSV data loader
+│   ├── models/                            # Data models and transformations
+│   │   └── stocks/                        # Stocks-specific models
+│   │       ├── bronze/                    # Bronze layer (raw data)
+│   │       │   ├── bronze_stock_schema.py # Bronze schema definition
+│   │       │   └── bronze_stocks_model.py # Bronze data processing
+│   │       ├── silver/                    # Silver layer (cleaned data)
+│   │       │   ├── silver_stocks_model.py # Silver data processing
+│   │       │   └── transformers/          # Silver transformations
+│   │       │       ├── daily_returns_transformer.py
+│   │       │       ├── data_cleaning_transformer.py
+│   │       │       └── worth_calculation_transformer.py
+│   │       └── gold/                       # Gold layer (aggregated data)
+│   │           ├── gold_stocks_model.py   # Gold data processing
+│   │           └── transformers/           # Gold transformations
+│   │               ├── average_daily_return_transformer.py
+│   │               ├── highest_worth_transformer.py
+│   │               ├── most_volatile_transformer.py
+│   │               └── top_30day_returns_transformer.py
+│   ├── modules/                           # Core framework modules
+│   │   ├── layer.py                       # Base layer class
+│   │   ├── loader.py                      # Base loader class
+│   │   ├── pipeline/                      # Pipeline framework
+│   │   │   ├── pipeline_config.py         # Configuration management
+│   │   │   └── pipeline.py                # Base pipeline class
+│   │   ├── schema.py                      # Schema management
+│   │   └── transformer.py                 # Base transformer class
+│   └── pipelines/                         # Pipeline implementations
+│       └── stocks_pipeline.py             # Main stocks pipeline
+├── test/                                  # Test files
+│   ├── test_bronze_stocks.py              # Bronze layer tests
+│   ├── test_silver_stocks.py              # Silver layer tests
+│   ├── test_gold_stocks.py                # Gold layer tests
+│   └── test_pipeline_config.py            # Configuration tests
+├── stocks_data.csv                        # Input data file
+├── stack.yml                              # CloudFormation template
+├── requirements.txt                       # Python dependencies
+├── create-update-stack.sh                 # Deployment script
+└── README.md                              # This file
+```
 
--   The file `stocks_data.csv` contains daily closing price of a few stocks on the NYSE/NASDAQ
--   Load the file as a DataFrame, Dataset, or RDD and complete the assignment objectives
--   The result of each question should be saved as a separate file in an S3 Bucket
+## 🏗️ Architecture Overview
 
-## Assumptions:
+### Medallion Architecture
+- **Bronze Layer**: Raw data ingestion and basic validation
+- **Silver Layer**: Data cleaning, enrichment, and business logic
+- **Gold Layer**: Aggregated metrics and final results
 
--   Use only the closing price to determine returns
--   If a price is missing on a given date, you can compute returns from the closest available date
--   Return can be trivially computed as the % difference of two prices
+### Technology Stack
+- **PySpark**: Data processing engine
+- **AWS Glue**: Serverless ETL service
+- **AWS S3**: Data storage
+- **AWS Athena**: Query engine for results
+- **CloudFormation**: Infrastructure as Code
+- **Pydantic**: Configuration management
 
-## Objectives:
+## 🚀 Quick Start
 
-1. Compute the average daily return of all stocks for every date
+### Prerequisites
+- AWS CLI configured with appropriate credentials
+- Python 3.11+
+- Access to AWS services (Glue, S3, Athena, CloudFormation)
 
-    | date       | average_return                    |
-    | ---------- | --------------------------------- |
-    | yyyy-MM-dd | return of all stocks on that date |
+### Local Development
+```bash
+# Install dependencies
+pip install -r requirements.txt
 
-2. Which stock was traded with the highest worth - as measured by **closing price \* volume** - on average?
+# Run tests
+pytest test/
 
-    | ticker | value |
-    | ------ | ----- |
-    |        |       |
+# Run pipeline locally (if needed)
+python src/jobs/stocks_glue_job.py
+```
 
-3. Which stock was the most volatile as measured by the annualized standard deviation of daily returns?
+### AWS Deployment
+1. **Set up environment variables**:
+   ```bash
+   # Create .env file
+   echo "AWS_ACCESS_KEY_ID=your_access_key" >> .env
+   echo "AWS_SECRET_ACCESS_KEY=your_secret_key" >> .env
+   echo "STACK_NAME=data-engineer-assignment-or-z" >> .env
+   ```
 
-    | ticker | standard_deviation |
-    | ------ | ------------------ |
-    |        |                    |
+2. **Deploy infrastructure**:
+   ```bash
+   chmod +x create-update-stack.sh
+   ./create-update-stack.sh
+   ```
 
-4. What were the top three 30-day return dates as measured by % increase in closing price compared to the closing price 30 days prior? present the top three ticker and date combinations.
+3. **Run the pipeline**:
+   ```bash
+   aws glue start-job-run --job-name stocks-data-processing
+   ```
 
-    | ticker | date |
-    | ------ | ---- |
-    |        |      |
+4. **Query results in Athena**:
+   ```sql
+   -- Average daily returns
+   SELECT * FROM stocks_database.average_daily_return 
+   ORDER BY date DESC LIMIT 10;
+   
+   -- Highest worth stock
+   SELECT * FROM stocks_database.highest_worth;
+   
+   -- Most volatile stock
+   SELECT * FROM stocks_database.most_volatile;
+   
+   -- Top 30-day returns
+   SELECT * FROM stocks_database.top_30day_returns;
+   ```
 
-## AWS Deployment
+## 📊 Results
 
--   At Vi, we manage and provision cloud infrastructure through definition files ([IaC](https://en.wikipedia.org/wiki/Infrastructure_as_code)). Please use IaC (such as CloudFormation) to deploy the code you created to perform the below tasks.
--   Infrastructure tasks:
-    -   Create a glue job
-    -   Create a Glue Catalog Database
-    -   Create a Glue Catalog Table for each result file
-    -   Create crawler/s
--   **Expected result: Questions (objectives) results should be queryable from Athena**
--   If you encounter issues with reading/writing from/to S3 buckets, it is recommended to add your name as a prefix to the bucket’s name. For example name the bucket: “data-engineer-assignment-my-name”
--   Use the AWS credentials provided in the email to deploy the code. **DO NOT COMMIT THEM IN THE CODE.**
--   Deploy your resources in the **Europe (Frankfurt) eu-central-1**
--   Create a local `.env` file with the following environment variables
-    -   AWS_ACCESS_KEY_ID
-    -   AWS_SECRET_ACCESS_KEY
-    -   STACK_NAME
--   Use the `create-update-stack.sh` in the repo to to deploy your stack file. A demo stack file is provided in the repo
+The pipeline generates 4 result tables in the Gold layer:
 
-## Submission
+| **Table** | **Description** | **Columns** |
+|-----------|-----------------|-------------|
+| `average_daily_return` | Average daily return per date | `date`, `average_return` |
+| `highest_worth` | Stock with highest average worth | `ticker`, `value` |
+| `most_volatile` | Most volatile stock by std dev | `ticker`, `standard_deviation` |
+| `top_30day_returns` | Top 3 stocks with best 30-day returns | `ticker`, `date` |
 
-Please share your Github repo by replying to the email.
-Write us any assumptions you made or additional information you think is relevant.
+## 🔧 Configuration
 
-## Evaluation
+### Pipeline Configuration
+The pipeline uses Pydantic for robust configuration management:
 
--   Objectives completion
--   Code quality & efficiency
--   AWS deployment
+```python
+class PipelineConfig(BaseModel):
+    input_s3_path: str
+    output_base: str
+    bronze_table_name: str = "stocks_bronze"
+```
+
+### AWS Resources
+- **Glue Job**: `stocks-data-processing`
+- **Database**: `stocks_database`
+- **S3 Bucket**: `data-engineer-assignment-or-z`
+- **Tables**: 4 Gold layer tables + crawlers
+
+## 🧪 Testing
+
+Run the test suite:
+```bash
+pytest test/ -v
+```
+
+Tests cover:
+- Bronze layer data ingestion
+- Silver layer transformations
+- Gold layer aggregations
+- Configuration validation
+
+## 📈 Performance Optimization
+
+### Partitioning Strategy
+- **Bronze**: Partitioned by `date` (1,027 partitions)
+- **Silver**: Partitioned by `date` for consistency
+- **Gold**: No partitioning for aggregated results (except `average_daily_return`)
+
+### Resource Configuration
+- **Glue Job**: 10 workers, G.1X worker type
+- **Execution Time**: ~10 minutes for full pipeline
+- **Data Volume**: ~5,136 rows processed
+
+## 🔍 Monitoring
+
+### CloudWatch Logs
+- Log Group: `/aws-glue/jobs/logs-v2`
+- Real-time monitoring available
+- Detailed execution logs
+
+### Job Status
+```bash
+aws glue get-job-run --job-name stocks-data-processing --run-id <run-id>
+```
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+1. **Schema Mismatch**: Ensure CloudFormation table schemas match transformer outputs
+2. **Import Errors**: Verify `src/` directory structure in deployment package
+3. **Partitioning Issues**: Check partition column configuration
+4. **Resource Limits**: Monitor Glue job capacity and timeout settings
+
+### Debug Commands
+```bash
+# Check job logs
+aws logs tail /aws-glue/jobs/logs-v2 --follow
+
+# Verify S3 data
+aws s3 ls s3://data-engineer-assignment-or-z/output/ --recursive
+
+# Test Athena queries
+aws athena start-query-execution --query-string "SELECT * FROM stocks_database.highest_worth"
+```
+
+## 📝 Key Features
+
+- ✅ **Medallion Architecture**: Bronze → Silver → Gold data flow
+- ✅ **Infrastructure as Code**: Complete CloudFormation deployment
+- ✅ **Schema Validation**: Pydantic-based configuration management
+- ✅ **Comprehensive Testing**: Unit tests for all layers
+- ✅ **Performance Optimized**: Efficient partitioning and resource allocation
+- ✅ **Production Ready**: Error handling, logging, and monitoring
+- ✅ **Queryable Results**: Athena integration for data analysis
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
+
+## 📄 License
+
+This project is part of a data engineering assignment and follows the original repository's licensing terms.
+
+---
+
+**Note**: Remember to exclude `.env` files containing AWS credentials from version control.
