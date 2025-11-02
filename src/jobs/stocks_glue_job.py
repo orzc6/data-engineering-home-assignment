@@ -8,6 +8,7 @@ from awsglue.utils import getResolvedOptions
 
 from src.pipelines.stocks_pipeline import StocksPipeline
 from src.modules.pipeline.pipeline_config import PipelineConfig
+from src.common.logging_utils import get_logger
 
 
 def main():
@@ -17,6 +18,7 @@ def main():
     sc = SparkContext()
     glueContext = GlueContext(sc)
     spark = glueContext.spark_session
+    logger = get_logger('main')
     
     try:
         # Get job arguments
@@ -47,7 +49,7 @@ def main():
         job.commit()
         
     except Exception as e:
-        print(f"Job failed: {str(e)}")
+        logger.info(f"Execution of job '{job_name}' failed.")
         raise
 
 
